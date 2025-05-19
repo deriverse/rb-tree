@@ -1,3 +1,6 @@
+mod node;
+
+use crate::node::{Node, NodePtr};
 use index_mem_alloc::MemoryMap;
 use solana_program::{
     account_info::AccountInfo, program::invoke, system_instruction, sysvar::rent::Rent,
@@ -7,242 +10,25 @@ use std::{cmp::Ordering, mem::size_of, ptr};
 pub const NULL_NODE: u32 = 0xFFFFFFFF;
 pub const NULL_ORDER: u32 = 0xFFFF;
 
-#[repr(C)]
-struct Node<T: Sized> {
-    key: T,
-    parent: u32,
-    left: u32,
-    right: u32,
-    sref: u32,
-    color: u32,
-    link: u32,
+pub enum RBTreeError {
+    /// Null pointer encountered
+    NullPointer,
+    /// Invalid node reference
+    InvalidNodeReference,
+    /// Memory allocation failed
+    AllocationFailed,
+    /// Account reallocation failed
+    ReallocationFailed,
 }
 
-#[derive(Clone, Copy)]
-pub struct NodePtr<T: Sized>(*mut Node<T>, *mut u64);
-
-impl<T> PartialEq for NodePtr<T> {
-    #[inline]
-    fn eq(&self, other: &Self) -> bool {
-        if self.is_null() && other.is_null() {
-            return true;
-        } else if self.is_null() || other.is_null() {
-            return false;
-        }
-        unsafe { (*self.0).sref == (*other.0).sref }
-    }
-}
-
-impl<T> NodePtr<T> {
-    fn null() -> NodePtr<T> {
-        NodePtr(ptr::null_mut(), ptr::null_mut())
-    }
-    pub fn is_null(&self) -> bool {
-        self.0.is_null()
-    }
-    /// # Safety
-    /// This function is really safe
-    pub unsafe fn get(entry: *mut u64, sref: u32) -> NodePtr<T> {
-        let node_ptr =
-            entry.offset(sref as isize * (size_of::<Node<T>>() >> 3) as isize) as *mut Node<T>;
-        NodePtr(node_ptr, entry)
-    }
-
-    fn new<'a, 'info>(
-        mut pt: MemoryMap, //MemoryMap,
-        entry: *mut u64,
-        non_tree_data_size: usize,
-        key: T,
-        link: u32,
-        tree_acc: &'a AccountInfo<'info>,
-        signer: &'a AccountInfo<'info>,
-        system_program: &'a AccountInfo<'info>,
-    ) -> NodePtr<T> {
-        let index = match pt.alloc() {
-            Ok(idx) => idx,
-            Err(_) => return NodePtr::null(),
-        };
-        let sref = index;
-        let acc_size = tree_acc.data_len();
-        let min_size = non_tree_data_size + size_of::<Node<T>>() * (sref + 1);
-        if min_size > acc_size {
-            let rent = &Rent::default();
-            let new_minimum_balance = rent.minimum_balance(min_size);
-            let lamports_diff = new_minimum_balance.saturating_sub(tree_acc.lamports());
-            invoke(
-                &system_instruction::transfer(signer.key, tree_acc.key, lamports_diff),
-                &[signer.clone(), tree_acc.clone(), system_program.clone()],
-            )
-                .unwrap();
-            tree_acc.realloc(min_size, true).unwrap();
-        }
-        unsafe {
-            let node_ptr =
-                entry.offset((sref * (size_of::<Node<T>>() >> 3)) as isize) as *mut Node<T>;
-            *node_ptr = Node {
-                key,
-                parent: NULL_NODE,
-                left: NULL_NODE,
-                right: NULL_NODE,
-                sref: sref as u32,
-                color: 1,
-                link,
-            };
-            NodePtr(node_ptr, entry)
-        }
-    }
-    fn left(&self) -> NodePtr<T> {
-        if self.is_null() {
-            return Self::null();
-        }
-        unsafe {
-            if (*self.0).left == NULL_NODE {
-                return Self::null();
-            }
-            NodePtr(
-                self.1.offset(
-                    (*self.0).left as isize * (std::mem::size_of::<Node<T>>() >> 3) as isize,
-                ) as *mut Node<T>,
-                self.1,
-            )
-        }
-    }
-    fn right(&self) -> NodePtr<T> {
-        if self.is_null() {
-            return Self::null();
-        }
-        unsafe {
-            if (*self.0).right == NULL_NODE {
-                return Self::null();
-            }
-            NodePtr(
-                self.1.offset(
-                    (*self.0).right as isize * (std::mem::size_of::<Node<T>>() >> 3) as isize,
-                ) as *mut Node<T>,
-                self.1,
-            )
-        }
-    }
-    fn parent(&self) -> NodePtr<T> {
-        unsafe {
-            if self.is_null() || (*self.0).parent == NULL_NODE {
-                return Self::null();
-            }
-            NodePtr(
-                self.1.offset(
-                    (*self.0).parent as isize * (std::mem::size_of::<Node<T>>() >> 3) as isize,
-                ) as *mut Node<T>,
-                self.1,
-            )
-        }
-    }
-    pub fn sref(&self) -> u32 {
-        if self.is_null() {
-            return NULL_NODE;
-        }
-        unsafe { (*self.0).sref }
-    }
-    pub fn link(&self) -> u32 {
-        if self.is_null() {
-            return NULL_ORDER;
-        }
-        unsafe { (*self.0).link }
-    }
-    pub fn key(&self) -> T
-    where
-        T: Copy,
-    {
-        unsafe { (*self.0).key }
-    }
-    fn set_parent(&mut self, parent: NodePtr<T>) {
-        if self.is_null() {
-            return;
-        }
-        unsafe {
-            if parent.is_null() {
-                (*self.0).parent = NULL_NODE
-            } else {
-                (*self.0).parent = (*parent.0).sref
-            }
-        }
-    }
-    fn set_left(&self, left: NodePtr<T>) {
-        if self.is_null() {
-            return;
-        }
-        unsafe {
-            if left.is_null() {
-                (*self.0).left = NULL_NODE
-            } else {
-                (*self.0).left = (*left.0).sref
-            }
-        }
-    }
-    fn set_right(&self, right: NodePtr<T>) {
-        if self.is_null() {
-            return;
-        }
-        unsafe {
-            if right.is_null() {
-                (*self.0).right = NULL_NODE
-            } else {
-                (*self.0).right = (*right.0).sref
-            }
-        }
-    }
-    fn set_color(&mut self, color: u32) {
-        if self.is_null() {
-            return;
-        }
-        unsafe { (*self.0).color = color }
-    }
-    fn is_red_color(&self) -> bool {
-        if self.is_null() {
-            return false;
-        }
-        unsafe { (*self.0).color == 1 }
-    }
-    fn is_black_color(&self) -> bool {
-        if self.is_null() {
-            return true;
-        }
-        unsafe { (*self.0).color == 0 }
-    }
-    fn set_red_color(&mut self) {
-        self.set_color(1);
-    }
-    fn set_black_color(&mut self) {
-        self.set_color(0);
-    }
-    fn get_color(&self) -> u32 {
-        if self.is_null() {
-            return 0;
-        }
-        unsafe { (*self.0).color }
-    }
-    pub fn min_node(self) -> NodePtr<T> {
-        let mut temp = self;
-        while !temp.left().is_null() {
-            temp = temp.left();
-        }
-        temp
-    }
-    pub fn max_node(self) -> NodePtr<T> {
-        let mut temp = self;
-        while !temp.right().is_null() {
-            temp = temp.right();
-        }
-        temp
-    }
-}
 pub struct RBTree {
     pub pt: MemoryMap,
     pub root: *mut u32,
     pub entry: *mut u64,
     /// Size of account data preceding the tree structure.
     /// Used when calculating the total account size during memory allocation.
-    /// This value represents the number of bytes reserved for metadata, headers,
-    /// or other data stored in the account before the tree nodes.
+    /// This value represents the number of bytes reserved for metadata,
+    /// headers, or other data stored in the account before the tree nodes.
     pub non_tree_data_size: usize,
 }
 

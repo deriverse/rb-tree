@@ -1,6 +1,6 @@
 [package]
 name = "rb-tree"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "Red-black tree implementation"
 authors = ["Deriverse <info@deriverse.io>"]
@@ -9,7 +9,7 @@ homepage = "https://deriverse.io/"
 
 [dependencies]
 solana-program = "^2.0.1"
-index-mem-alloc = {git = "https://github.com/deriverse/index-mem-alloc", tag = "v0.1.2"}
+index-mem-alloc = {git = "https://github.com/deriverse/index-mem-alloc", tag = "v0.1.3"}
 
 [workspace.lints.clippy]
 branches_sharing_code = "warn"

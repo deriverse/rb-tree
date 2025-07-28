@@ -2,26 +2,27 @@ use index_mem_alloc::MemoryMap;
 use solana_program::{
     account_info::AccountInfo, program::invoke, system_instruction, sysvar::rent::Rent,
 };
-use std::{cmp::Ordering, mem::size_of, ptr};
+use std::{cmp::Ordering, fmt, mem::size_of, ptr};
 
 pub const NULL_NODE: u32 = 0xFFFFFFFF;
 pub const NULL_ORDER: u32 = 0xFFFF;
 
-#[repr(C)]
-struct Node<T: Sized> {
-    key: T,
-    parent: u32,
-    left: u32,
-    right: u32,
-    sref: u32,
-    color: u32,
-    link: u32,
+#[repr(C, packed)]
+#[derive(Debug)]
+pub struct Node<T: Sized + std::fmt::Debug> {
+    pub key: T,
+    pub parent: u32,
+    pub left: u32,
+    pub right: u32,
+    pub sref: u32,
+    pub color: u32,
+    pub link: u32,
 }
 
 #[derive(Clone, Copy)]
-pub struct NodePtr<T: Sized>(*mut Node<T>, *mut u64);
+pub struct NodePtr<T: Sized + std::fmt::Debug>(pub *mut Node<T>, pub *mut u64);
 
-impl<T> PartialEq for NodePtr<T> {
+impl<T: std::fmt::Debug> PartialEq for NodePtr<T> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         if self.is_null() && other.is_null() {
@@ -33,7 +34,7 @@ impl<T> PartialEq for NodePtr<T> {
     }
 }
 
-impl<T> NodePtr<T> {
+impl<T: std::fmt::Debug> NodePtr<T> {
     fn null() -> NodePtr<T> {
         NodePtr(ptr::null_mut(), ptr::null_mut())
     }
@@ -64,6 +65,7 @@ impl<T> NodePtr<T> {
         };
         let sref = index;
         let acc_size = tree_acc.data_len();
+        solana_program::msg!("VERY IMPORTANT: {:?}", size_of::<Node<T>>());
         let min_size = non_tree_data_size + size_of::<Node<T>>() * (sref + 1);
         if min_size > acc_size {
             let rent = &Rent::default();
@@ -73,7 +75,7 @@ impl<T> NodePtr<T> {
                 &system_instruction::transfer(signer.key, tree_acc.key, lamports_diff),
                 &[signer.clone(), tree_acc.clone(), system_program.clone()],
             )
-                .unwrap();
+            .unwrap();
             tree_acc.realloc(min_size, true).unwrap();
         }
         unsafe {
@@ -91,33 +93,35 @@ impl<T> NodePtr<T> {
             NodePtr(node_ptr, entry)
         }
     }
-    fn left(&self) -> NodePtr<T> {
+    pub fn left(&self) -> NodePtr<T> {
         if self.is_null() {
             return Self::null();
         }
         unsafe {
-            if (*self.0).left == NULL_NODE {
+            if (self.0.read_unaligned()).left == NULL_NODE {
                 return Self::null();
             }
             NodePtr(
                 self.1.offset(
-                    (*self.0).left as isize * (std::mem::size_of::<Node<T>>() >> 3) as isize,
+                    (self.0.read_unaligned()).left as isize
+                        * (std::mem::size_of::<Node<T>>() >> 3) as isize,
                 ) as *mut Node<T>,
                 self.1,
             )
         }
     }
-    fn right(&self) -> NodePtr<T> {
+    pub fn right(&self) -> NodePtr<T> {
         if self.is_null() {
             return Self::null();
         }
         unsafe {
-            if (*self.0).right == NULL_NODE {
+            if (self.0.read_unaligned()).right == NULL_NODE {
                 return Self::null();
             }
             NodePtr(
                 self.1.offset(
-                    (*self.0).right as isize * (std::mem::size_of::<Node<T>>() >> 3) as isize,
+                    (self.0.read_unaligned()).right as isize
+                        * (std::mem::size_of::<Node<T>>() >> 3) as isize,
                 ) as *mut Node<T>,
                 self.1,
             )
@@ -125,12 +129,13 @@ impl<T> NodePtr<T> {
     }
     fn parent(&self) -> NodePtr<T> {
         unsafe {
-            if self.is_null() || (*self.0).parent == NULL_NODE {
+            if self.is_null() || (self.0.read_unaligned()).parent == NULL_NODE {
                 return Self::null();
             }
             NodePtr(
                 self.1.offset(
-                    (*self.0).parent as isize * (std::mem::size_of::<Node<T>>() >> 3) as isize,
+                    (self.0.read_unaligned()).parent as isize
+                        * (std::mem::size_of::<Node<T>>() >> 3) as isize,
                 ) as *mut Node<T>,
                 self.1,
             )
@@ -140,19 +145,19 @@ impl<T> NodePtr<T> {
         if self.is_null() {
             return NULL_NODE;
         }
-        unsafe { (*self.0).sref }
+        unsafe { self.0.read_unaligned().sref }
     }
     pub fn link(&self) -> u32 {
         if self.is_null() {
             return NULL_ORDER;
         }
-        unsafe { (*self.0).link }
+        unsafe { (self.0).read_unaligned().link }
     }
     pub fn key(&self) -> T
     where
         T: Copy,
     {
-        unsafe { (*self.0).key }
+        unsafe { self.0.read_unaligned().key }
     }
     fn set_parent(&mut self, parent: NodePtr<T>) {
         if self.is_null() {
@@ -196,17 +201,17 @@ impl<T> NodePtr<T> {
         }
         unsafe { (*self.0).color = color }
     }
-    fn is_red_color(&self) -> bool {
+    pub fn is_red_color(&self) -> bool {
         if self.is_null() {
             return false;
         }
-        unsafe { (*self.0).color == 1 }
+        unsafe { (self.0).read_unaligned().color == 1 }
     }
-    fn is_black_color(&self) -> bool {
+    pub fn is_black_color(&self) -> bool {
         if self.is_null() {
             return true;
         }
-        unsafe { (*self.0).color == 0 }
+        unsafe { (self.0).read_unaligned().color == 0 }
     }
     fn set_red_color(&mut self) {
         self.set_color(1);
@@ -218,7 +223,7 @@ impl<T> NodePtr<T> {
         if self.is_null() {
             return 0;
         }
-        unsafe { (*self.0).color }
+        unsafe { (self.0.read_unaligned()).color }
     }
     pub fn min_node(self) -> NodePtr<T> {
         let mut temp = self;
@@ -256,7 +261,7 @@ impl RBTree {
         unsafe { *self.root = new_root }
     }
     #[inline]
-    fn left_rotate<T: Copy>(&self, mut node: NodePtr<T>) {
+    fn left_rotate<T: Copy + std::fmt::Debug>(&self, mut node: NodePtr<T>) {
         let mut temp = node.right();
         node.set_right(temp.left());
         if !temp.left().is_null() {
@@ -274,7 +279,7 @@ impl RBTree {
         node.set_parent(temp);
     }
     #[inline]
-    fn right_rotate<T: Copy>(&self, mut node: NodePtr<T>) {
+    fn right_rotate<T: Copy + std::fmt::Debug>(&self, mut node: NodePtr<T>) {
         let mut temp = node.left();
         node.set_left(temp.right());
 
@@ -294,7 +299,7 @@ impl RBTree {
         node.set_parent(temp);
     }
     #[inline]
-    fn insert_fixup<T: Copy>(&self, mut node: NodePtr<T>) {
+    fn insert_fixup<T: Copy + std::fmt::Debug>(&self, mut node: NodePtr<T>) {
         let mut parent;
         let mut gparent;
         while node.parent().is_red_color() {
@@ -337,7 +342,7 @@ impl RBTree {
         self.get_root::<T>().set_black_color();
     }
 
-    pub fn insert_direct<'info, 'a, T: Copy + PartialOrd>(
+    pub fn insert_direct<'info, 'a, T: Copy + PartialOrd + std::fmt::Debug>(
         &self,
         y: NodePtr<T>,
         key: T,
@@ -370,7 +375,7 @@ impl RBTree {
         self.insert_fixup(node);
         node_sref
     }
-    pub fn insert<'b, 'info, 'a, T: Copy + PartialOrd>(
+    pub fn insert<'b, 'info, 'a, T: Copy + PartialOrd + std::fmt::Debug>(
         &self,
         key: T,
         link: u32,
@@ -415,7 +420,7 @@ impl RBTree {
         node_sref
     }
     #[inline]
-    pub fn get_root<T>(&self) -> NodePtr<T> {
+    pub fn get_root<T: std::fmt::Debug>(&self) -> NodePtr<T> {
         unsafe {
             if *self.root == NULL_NODE {
                 return NodePtr::null();
@@ -427,7 +432,10 @@ impl RBTree {
             NodePtr(node_ptr, self.entry)
         }
     }
-    pub fn find_node<T: Copy + Ord + std::fmt::Display>(&self, key: T) -> NodePtr<T> {
+    pub fn find_node<T: Copy + Ord + std::fmt::Display + std::fmt::Debug>(
+        &self,
+        key: T,
+    ) -> NodePtr<T> {
         if self.get_root_sref() == NULL_NODE {
             return NodePtr::null();
         }
@@ -447,7 +455,7 @@ impl RBTree {
         }
         NodePtr::null()
     }
-    pub fn find_new_parent_or_equal<T: Ord + Copy + std::fmt::Display>(
+    pub fn find_new_parent_or_equal<T: Ord + Copy + std::fmt::Display + std::fmt::Debug>(
         &self,
         key: T,
     ) -> (NodePtr<T>, u32) {
@@ -478,7 +486,11 @@ impl RBTree {
         }
     }
     #[inline]
-    fn delete_fixup<T: Copy>(&self, mut node: NodePtr<T>, mut parent: NodePtr<T>) {
+    fn delete_fixup<T: Copy + std::fmt::Debug>(
+        &self,
+        mut node: NodePtr<T>,
+        mut parent: NodePtr<T>,
+    ) {
         let mut other;
         while node.sref() != self.get_root_sref() && node.is_black_color() {
             if parent.left() == node {
@@ -538,7 +550,7 @@ impl RBTree {
         node.set_black_color();
     }
     #[inline]
-    pub fn delete<T: Copy>(&mut self, node: NodePtr<T>) {
+    pub fn delete<T: Copy + std::fmt::Debug>(&mut self, node: NodePtr<T>) {
         let mut child;
         let mut parent;
         let color;
@@ -599,7 +611,7 @@ impl RBTree {
         self.pt.dealloc(node.sref() as usize).unwrap();
     }
 
-    pub fn remove<T: Copy + Ord + std::fmt::Display>(&mut self, key: T) -> u32 {
+    pub fn remove<T: Copy + Ord + std::fmt::Display + std::fmt::Debug>(&mut self, key: T) -> u32 {
         let node = self.find_node(key);
         if node.is_null() {
             return NULL_NODE;

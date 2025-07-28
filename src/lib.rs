@@ -2,27 +2,53 @@ use index_mem_alloc::MemoryMap;
 use solana_program::{
     account_info::AccountInfo, program::invoke, system_instruction, sysvar::rent::Rent,
 };
-use std::{cmp::Ordering, fmt, mem::size_of, ptr};
+use std::{
+    cmp::Ordering,
+    fmt::{self, Debug},
+    mem::size_of,
+    ptr,
+};
 
 pub const NULL_NODE: u32 = 0xFFFFFFFF;
 pub const NULL_ORDER: u32 = 0xFFFF;
 
 #[repr(C, packed)]
-#[derive(Debug)]
-pub struct Node<T: Sized + std::fmt::Debug> {
-    pub key: T,
-    pub parent: u32,
-    pub left: u32,
-    pub right: u32,
-    pub sref: u32,
-    pub color: u32,
-    pub link: u32,
+pub struct Node<T: Sized> {
+    key: T,
+    parent: u32,
+    left: u32,
+    right: u32,
+    sref: u32,
+    color: u32,
+    link: u32,
+}
+
+impl<T: Debug + Copy> Debug for Node<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let key = self.key;
+        let parent = self.parent;
+        let left = self.left;
+        let right = self.right;
+        let sref = self.sref;
+        let color = self.color;
+        let link = self.link;
+
+        f.debug_struct("Node")
+            .field("key", &key)
+            .field("parent", &parent)
+            .field("left", &left)
+            .field("right", &right)
+            .field("sref", &sref)
+            .field("color", &color)
+            .field("link", &link)
+            .finish()
+    }
 }
 
 #[derive(Clone, Copy)]
-pub struct NodePtr<T: Sized + std::fmt::Debug>(pub *mut Node<T>, pub *mut u64);
+pub struct NodePtr<T: Sized>(pub *mut Node<T>, pub *mut u64);
 
-impl<T: std::fmt::Debug> PartialEq for NodePtr<T> {
+impl<T> PartialEq for NodePtr<T> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         if self.is_null() && other.is_null() {
@@ -34,7 +60,7 @@ impl<T: std::fmt::Debug> PartialEq for NodePtr<T> {
     }
 }
 
-impl<T: std::fmt::Debug> NodePtr<T> {
+impl<T> NodePtr<T> {
     fn null() -> NodePtr<T> {
         NodePtr(ptr::null_mut(), ptr::null_mut())
     }
@@ -65,7 +91,6 @@ impl<T: std::fmt::Debug> NodePtr<T> {
         };
         let sref = index;
         let acc_size = tree_acc.data_len();
-        solana_program::msg!("VERY IMPORTANT: {:?}", size_of::<Node<T>>());
         let min_size = non_tree_data_size + size_of::<Node<T>>() * (sref + 1);
         if min_size > acc_size {
             let rent = &Rent::default();
@@ -261,7 +286,7 @@ impl RBTree {
         unsafe { *self.root = new_root }
     }
     #[inline]
-    fn left_rotate<T: Copy + std::fmt::Debug>(&self, mut node: NodePtr<T>) {
+    fn left_rotate<T: Copy>(&self, mut node: NodePtr<T>) {
         let mut temp = node.right();
         node.set_right(temp.left());
         if !temp.left().is_null() {
@@ -279,7 +304,7 @@ impl RBTree {
         node.set_parent(temp);
     }
     #[inline]
-    fn right_rotate<T: Copy + std::fmt::Debug>(&self, mut node: NodePtr<T>) {
+    fn right_rotate<T: Copy>(&self, mut node: NodePtr<T>) {
         let mut temp = node.left();
         node.set_left(temp.right());
 
@@ -299,7 +324,7 @@ impl RBTree {
         node.set_parent(temp);
     }
     #[inline]
-    fn insert_fixup<T: Copy + std::fmt::Debug>(&self, mut node: NodePtr<T>) {
+    fn insert_fixup<T: Copy>(&self, mut node: NodePtr<T>) {
         let mut parent;
         let mut gparent;
         while node.parent().is_red_color() {
@@ -342,7 +367,7 @@ impl RBTree {
         self.get_root::<T>().set_black_color();
     }
 
-    pub fn insert_direct<'info, 'a, T: Copy + PartialOrd + std::fmt::Debug>(
+    pub fn insert_direct<'info, 'a, T: Copy + PartialOrd>(
         &self,
         y: NodePtr<T>,
         key: T,
@@ -375,7 +400,7 @@ impl RBTree {
         self.insert_fixup(node);
         node_sref
     }
-    pub fn insert<'b, 'info, 'a, T: Copy + PartialOrd + std::fmt::Debug>(
+    pub fn insert<'b, 'info, 'a, T: Copy + PartialOrd>(
         &self,
         key: T,
         link: u32,
@@ -420,7 +445,7 @@ impl RBTree {
         node_sref
     }
     #[inline]
-    pub fn get_root<T: std::fmt::Debug>(&self) -> NodePtr<T> {
+    pub fn get_root<T>(&self) -> NodePtr<T> {
         unsafe {
             if *self.root == NULL_NODE {
                 return NodePtr::null();
@@ -432,10 +457,7 @@ impl RBTree {
             NodePtr(node_ptr, self.entry)
         }
     }
-    pub fn find_node<T: Copy + Ord + std::fmt::Display + std::fmt::Debug>(
-        &self,
-        key: T,
-    ) -> NodePtr<T> {
+    pub fn find_node<T: Copy + Ord + std::fmt::Display>(&self, key: T) -> NodePtr<T> {
         if self.get_root_sref() == NULL_NODE {
             return NodePtr::null();
         }
@@ -455,10 +477,7 @@ impl RBTree {
         }
         NodePtr::null()
     }
-    pub fn find_new_parent_or_equal<T: Ord + Copy + std::fmt::Display + std::fmt::Debug>(
-        &self,
-        key: T,
-    ) -> (NodePtr<T>, u32) {
+    pub fn find_new_parent_or_equal<T: Ord + Copy>(&self, key: T) -> (NodePtr<T>, u32) {
         if self.get_root_sref() == NULL_NODE {
             return (NodePtr::null(), 0);
         }
@@ -486,11 +505,7 @@ impl RBTree {
         }
     }
     #[inline]
-    fn delete_fixup<T: Copy + std::fmt::Debug>(
-        &self,
-        mut node: NodePtr<T>,
-        mut parent: NodePtr<T>,
-    ) {
+    fn delete_fixup<T: Copy>(&self, mut node: NodePtr<T>, mut parent: NodePtr<T>) {
         let mut other;
         while node.sref() != self.get_root_sref() && node.is_black_color() {
             if parent.left() == node {
@@ -550,7 +565,7 @@ impl RBTree {
         node.set_black_color();
     }
     #[inline]
-    pub fn delete<T: Copy + std::fmt::Debug>(&mut self, node: NodePtr<T>) {
+    pub fn delete<T: Copy>(&mut self, node: NodePtr<T>) {
         let mut child;
         let mut parent;
         let color;
@@ -611,7 +626,7 @@ impl RBTree {
         self.pt.dealloc(node.sref() as usize).unwrap();
     }
 
-    pub fn remove<T: Copy + Ord + std::fmt::Display + std::fmt::Debug>(&mut self, key: T) -> u32 {
+    pub fn remove<T: Copy + Ord + std::fmt::Display>(&mut self, key: T) -> u32 {
         let node = self.find_node(key);
         if node.is_null() {
             return NULL_NODE;

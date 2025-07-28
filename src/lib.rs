@@ -46,7 +46,7 @@ impl<T: Debug + Copy> Debug for Node<T> {
 }
 
 #[derive(Clone, Copy)]
-pub struct NodePtr<T: Sized>(pub *mut Node<T>, pub *mut u64);
+pub struct NodePtr<T: Sized>(*mut Node<T>, *mut u64);
 
 impl<T> PartialEq for NodePtr<T> {
     #[inline]
@@ -123,13 +123,12 @@ impl<T> NodePtr<T> {
             return Self::null();
         }
         unsafe {
-            if (self.0.read_unaligned()).left == NULL_NODE {
+            if self.get_node().left == NULL_NODE {
                 return Self::null();
             }
             NodePtr(
                 self.1.offset(
-                    (self.0.read_unaligned()).left as isize
-                        * (std::mem::size_of::<Node<T>>() >> 3) as isize,
+                    self.get_node().left as isize * (std::mem::size_of::<Node<T>>() >> 3) as isize,
                 ) as *mut Node<T>,
                 self.1,
             )
@@ -140,13 +139,12 @@ impl<T> NodePtr<T> {
             return Self::null();
         }
         unsafe {
-            if (self.0.read_unaligned()).right == NULL_NODE {
+            if self.get_node().right == NULL_NODE {
                 return Self::null();
             }
             NodePtr(
                 self.1.offset(
-                    (self.0.read_unaligned()).right as isize
-                        * (std::mem::size_of::<Node<T>>() >> 3) as isize,
+                    self.get_node().right as isize * (std::mem::size_of::<Node<T>>() >> 3) as isize,
                 ) as *mut Node<T>,
                 self.1,
             )
@@ -154,12 +152,12 @@ impl<T> NodePtr<T> {
     }
     fn parent(&self) -> NodePtr<T> {
         unsafe {
-            if self.is_null() || (self.0.read_unaligned()).parent == NULL_NODE {
+            if self.is_null() || self.get_node().parent == NULL_NODE {
                 return Self::null();
             }
             NodePtr(
                 self.1.offset(
-                    (self.0.read_unaligned()).parent as isize
+                    self.get_node().parent as isize
                         * (std::mem::size_of::<Node<T>>() >> 3) as isize,
                 ) as *mut Node<T>,
                 self.1,
@@ -170,20 +168,25 @@ impl<T> NodePtr<T> {
         if self.is_null() {
             return NULL_NODE;
         }
-        unsafe { self.0.read_unaligned().sref }
+        unsafe { self.get_node().sref }
     }
     pub fn link(&self) -> u32 {
         if self.is_null() {
             return NULL_ORDER;
         }
-        unsafe { (self.0).read_unaligned().link }
+        unsafe { self.get_node().link }
     }
     pub fn key(&self) -> T
     where
         T: Copy,
     {
-        unsafe { self.0.read_unaligned().key }
+        unsafe { self.get_node().key }
     }
+
+    pub unsafe fn get_node(&self) -> Node<T> {
+        unsafe { self.0.read_unaligned() }
+    }
+
     fn set_parent(&mut self, parent: NodePtr<T>) {
         if self.is_null() {
             return;
@@ -230,13 +233,13 @@ impl<T> NodePtr<T> {
         if self.is_null() {
             return false;
         }
-        unsafe { (self.0).read_unaligned().color == 1 }
+        unsafe { self.get_node().color == 1 }
     }
     pub fn is_black_color(&self) -> bool {
         if self.is_null() {
             return true;
         }
-        unsafe { (self.0).read_unaligned().color == 0 }
+        unsafe { self.get_node().color == 0 }
     }
     fn set_red_color(&mut self) {
         self.set_color(1);
@@ -248,7 +251,7 @@ impl<T> NodePtr<T> {
         if self.is_null() {
             return 0;
         }
-        unsafe { (self.0.read_unaligned()).color }
+        unsafe { self.get_node().color }
     }
     pub fn min_node(self) -> NodePtr<T> {
         let mut temp = self;

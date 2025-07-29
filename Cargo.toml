@@ -9,7 +9,7 @@ homepage = "https://deriverse.io/"
 
 [dependencies]
 solana-program = "^2.0.1"
-index-mem-alloc = { git = "https://github.com/deriverse/index-mem-alloc", branch = "feature/add_maps_comparison" }
+index-mem-alloc = {git = "https://github.com/deriverse/index-mem-alloc", tag = "v0.1.4"}
 
 [workspace.lints.clippy]
 branches_sharing_code = "warn"

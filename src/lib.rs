@@ -2,13 +2,18 @@ use index_mem_alloc::MemoryMap;
 use solana_program::{
     account_info::AccountInfo, program::invoke, system_instruction, sysvar::rent::Rent,
 };
-use std::{cmp::Ordering, mem::size_of, ptr};
+use std::{
+    cmp::Ordering,
+    fmt::{self, Debug},
+    mem::size_of,
+    ptr,
+};
 
 pub const NULL_NODE: u32 = 0xFFFFFFFF;
 pub const NULL_ORDER: u32 = 0xFFFF;
 
-#[repr(C)]
-struct Node<T: Sized> {
+#[repr(C, packed)]
+pub struct Node<T: Sized> {
     key: T,
     parent: u32,
     left: u32,
@@ -16,6 +21,28 @@ struct Node<T: Sized> {
     sref: u32,
     color: u32,
     link: u32,
+}
+
+impl<T: Debug + Copy> Debug for Node<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let key = self.key;
+        let parent = self.parent;
+        let left = self.left;
+        let right = self.right;
+        let sref = self.sref;
+        let color = self.color;
+        let link = self.link;
+
+        f.debug_struct("Node")
+            .field("key", &key)
+            .field("parent", &parent)
+            .field("left", &left)
+            .field("right", &right)
+            .field("sref", &sref)
+            .field("color", &color)
+            .field("link", &link)
+            .finish()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -73,7 +100,7 @@ impl<T> NodePtr<T> {
                 &system_instruction::transfer(signer.key, tree_acc.key, lamports_diff),
                 &[signer.clone(), tree_acc.clone(), system_program.clone()],
             )
-                .unwrap();
+            .unwrap();
             tree_acc.realloc(min_size, true).unwrap();
         }
         unsafe {
@@ -91,33 +118,33 @@ impl<T> NodePtr<T> {
             NodePtr(node_ptr, entry)
         }
     }
-    fn left(&self) -> NodePtr<T> {
+    pub fn left(&self) -> NodePtr<T> {
         if self.is_null() {
             return Self::null();
         }
         unsafe {
-            if (*self.0).left == NULL_NODE {
+            if self.get_node().left == NULL_NODE {
                 return Self::null();
             }
             NodePtr(
                 self.1.offset(
-                    (*self.0).left as isize * (std::mem::size_of::<Node<T>>() >> 3) as isize,
+                    self.get_node().left as isize * (std::mem::size_of::<Node<T>>() >> 3) as isize,
                 ) as *mut Node<T>,
                 self.1,
             )
         }
     }
-    fn right(&self) -> NodePtr<T> {
+    pub fn right(&self) -> NodePtr<T> {
         if self.is_null() {
             return Self::null();
         }
         unsafe {
-            if (*self.0).right == NULL_NODE {
+            if self.get_node().right == NULL_NODE {
                 return Self::null();
             }
             NodePtr(
                 self.1.offset(
-                    (*self.0).right as isize * (std::mem::size_of::<Node<T>>() >> 3) as isize,
+                    self.get_node().right as isize * (std::mem::size_of::<Node<T>>() >> 3) as isize,
                 ) as *mut Node<T>,
                 self.1,
             )
@@ -125,12 +152,13 @@ impl<T> NodePtr<T> {
     }
     fn parent(&self) -> NodePtr<T> {
         unsafe {
-            if self.is_null() || (*self.0).parent == NULL_NODE {
+            if self.is_null() || self.get_node().parent == NULL_NODE {
                 return Self::null();
             }
             NodePtr(
                 self.1.offset(
-                    (*self.0).parent as isize * (std::mem::size_of::<Node<T>>() >> 3) as isize,
+                    self.get_node().parent as isize
+                        * (std::mem::size_of::<Node<T>>() >> 3) as isize,
                 ) as *mut Node<T>,
                 self.1,
             )
@@ -140,20 +168,25 @@ impl<T> NodePtr<T> {
         if self.is_null() {
             return NULL_NODE;
         }
-        unsafe { (*self.0).sref }
+        unsafe { self.get_node().sref }
     }
     pub fn link(&self) -> u32 {
         if self.is_null() {
             return NULL_ORDER;
         }
-        unsafe { (*self.0).link }
+        unsafe { self.get_node().link }
     }
     pub fn key(&self) -> T
     where
         T: Copy,
     {
-        unsafe { (*self.0).key }
+        unsafe { self.get_node().key }
     }
+
+    pub unsafe fn get_node(&self) -> Node<T> {
+        unsafe { self.0.read_unaligned() }
+    }
+
     fn set_parent(&mut self, parent: NodePtr<T>) {
         if self.is_null() {
             return;
@@ -196,17 +229,17 @@ impl<T> NodePtr<T> {
         }
         unsafe { (*self.0).color = color }
     }
-    fn is_red_color(&self) -> bool {
+    pub fn is_red_color(&self) -> bool {
         if self.is_null() {
             return false;
         }
-        unsafe { (*self.0).color == 1 }
+        unsafe { self.get_node().color == 1 }
     }
-    fn is_black_color(&self) -> bool {
+    pub fn is_black_color(&self) -> bool {
         if self.is_null() {
             return true;
         }
-        unsafe { (*self.0).color == 0 }
+        unsafe { self.get_node().color == 0 }
     }
     fn set_red_color(&mut self) {
         self.set_color(1);
@@ -218,7 +251,7 @@ impl<T> NodePtr<T> {
         if self.is_null() {
             return 0;
         }
-        unsafe { (*self.0).color }
+        unsafe { self.get_node().color }
     }
     pub fn min_node(self) -> NodePtr<T> {
         let mut temp = self;
@@ -447,10 +480,7 @@ impl RBTree {
         }
         NodePtr::null()
     }
-    pub fn find_new_parent_or_equal<T: Ord + Copy + std::fmt::Display>(
-        &self,
-        key: T,
-    ) -> (NodePtr<T>, u32) {
+    pub fn find_new_parent_or_equal<T: Ord + Copy>(&self, key: T) -> (NodePtr<T>, u32) {
         if self.get_root_sref() == NULL_NODE {
             return (NodePtr::null(), 0);
         }

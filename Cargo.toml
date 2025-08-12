@@ -8,8 +8,8 @@ license = "Apache-2.0"
 homepage = "https://deriverse.io/"
 
 [dependencies]
-solana-program = "^2.0.1"
-index-mem-alloc = {git = "https://github.com/deriverse/index-mem-alloc", tag = "v0.1.4"}
+solana-program = "^2.2.1"
+index-mem-alloc = { git = "https://github.com/deriverse/index-mem-alloc", tag = "v0.1.4" }
 
 [workspace.lints.clippy]
 branches_sharing_code = "warn"

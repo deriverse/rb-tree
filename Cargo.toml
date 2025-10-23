@@ -1,6 +1,6 @@
 [package]
 name = "rb-tree"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 description = "Red-black tree implementation"
 authors = ["Deriverse <info@deriverse.io>"]

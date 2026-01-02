@@ -1,7 +1,6 @@
 use index_mem_alloc::MemoryMap;
-use solana_program::{
-    account_info::AccountInfo, program::invoke, system_instruction, sysvar::rent::Rent,
-};
+use solana_program::{account_info::AccountInfo, program::invoke, sysvar::rent::Rent};
+use solana_system_interface::instruction::transfer;
 use std::{
     cmp::Ordering,
     fmt::{self, Debug},
@@ -97,11 +96,11 @@ impl<T> NodePtr<T> {
             let new_minimum_balance = rent.minimum_balance(min_size);
             let lamports_diff = new_minimum_balance.saturating_sub(tree_acc.lamports());
             invoke(
-                &system_instruction::transfer(signer.key, tree_acc.key, lamports_diff),
+                &transfer(signer.key, tree_acc.key, lamports_diff),
                 &[signer.clone(), tree_acc.clone(), system_program.clone()],
             )
             .unwrap();
-            tree_acc.realloc(min_size, true).unwrap();
+            tree_acc.resize(min_size).unwrap();
         }
         unsafe {
             let node_ptr =

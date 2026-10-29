@@ -1,6 +1,7 @@
 use index_mem_alloc::MemoryMap;
 use solana_program::{
-    account_info::AccountInfo, program::invoke, system_instruction, sysvar::rent::Rent,
+    account_info::AccountInfo, program::invoke, program_error::ProgramError, system_instruction,
+    sysvar::rent::Rent,
 };
 use std::{
     cmp::Ordering,
@@ -96,11 +97,29 @@ impl<T> NodePtr<T> {
             let rent = &Rent::default();
             let new_minimum_balance = rent.minimum_balance(min_size);
             let lamports_diff = new_minimum_balance.saturating_sub(tree_acc.lamports());
-            invoke(
-                &system_instruction::transfer(signer.key, tree_acc.key, lamports_diff),
-                &[signer.clone(), tree_acc.clone(), system_program.clone()],
-            )
-            .unwrap();
+
+            if lamports_diff > 0 {
+                let new_payer_balance = signer
+                    .lamports()
+                    .checked_sub(lamports_diff)
+                    .ok_or(ProgramError::InsufficientFunds)
+                    .unwrap();
+
+                if new_payer_balance < rent.minimum_balance(signer.data_len()) {
+                    // todo fix
+                    panic!("IF");
+                }
+
+                let new_account_balance = tree_acc
+                    .lamports()
+                    .checked_add(lamports_diff)
+                    .ok_or(ProgramError::ArithmeticOverflow)
+                    .unwrap();
+
+                **signer.try_borrow_mut_lamports().unwrap() = new_payer_balance;
+                **tree_acc.try_borrow_mut_lamports().unwrap() = new_account_balance;
+            }
+
             tree_acc.realloc(min_size, true).unwrap();
         }
         unsafe {

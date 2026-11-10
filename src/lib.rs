@@ -1,5 +1,4 @@
 use index_mem_alloc::MemoryMap;
-use solana_program::program_error::ProgramError;
 
 use std::{
     cmp::Ordering,
@@ -8,7 +7,7 @@ use std::{
     ptr,
 };
 
-pub type TreeResizeClosure<'a> = &'a mut dyn FnMut(usize) -> Result<(), ProgramError>;
+pub type TreeResizeClosure<'a> = &'a mut dyn FnMut(usize);
 
 pub const NULL_NODE: u32 = 0xFFFFFFFF;
 pub const NULL_ORDER: u32 = 0xFFFF;
@@ -91,7 +90,7 @@ impl<T> NodePtr<T> {
         let sref = index;
 
         let min_size = non_tree_data_size + size_of::<Node<T>>() * (sref + 1);
-        resize_closure(min_size).unwrap();
+        resize_closure(min_size);
 
         unsafe {
             let node_ptr =

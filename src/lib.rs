@@ -1,12 +1,13 @@
 use index_mem_alloc::MemoryMap;
-use solana_program::{account_info::AccountInfo, program::invoke, sysvar::rent::Rent};
-use solana_system_interface::instruction::transfer;
+
 use std::{
     cmp::Ordering,
     fmt::{self, Debug},
     mem::size_of,
     ptr,
 };
+
+pub type TreeResizeClosure<'a> = &'a mut dyn FnMut(usize);
 
 pub const NULL_NODE: u32 = 0xFFFFFFFF;
 pub const NULL_ORDER: u32 = 0xFFFF;
@@ -80,28 +81,17 @@ impl<T> NodePtr<T> {
         non_tree_data_size: usize,
         key: T,
         link: u32,
-        tree_acc: &'a AccountInfo<'info>,
-        signer: &'a AccountInfo<'info>,
-        system_program: &'a AccountInfo<'info>,
+        resize_closure: TreeResizeClosure,
     ) -> NodePtr<T> {
         let index = match pt.alloc() {
             Ok(idx) => idx,
             Err(_) => return NodePtr::null(),
         };
         let sref = index;
-        let acc_size = tree_acc.data_len();
+
         let min_size = non_tree_data_size + size_of::<Node<T>>() * (sref + 1);
-        if min_size > acc_size {
-            let rent = &Rent::default();
-            let new_minimum_balance = rent.minimum_balance(min_size);
-            let lamports_diff = new_minimum_balance.saturating_sub(tree_acc.lamports());
-            invoke(
-                &transfer(signer.key, tree_acc.key, lamports_diff),
-                &[signer.clone(), tree_acc.clone(), system_program.clone()],
-            )
-            .unwrap();
-            tree_acc.resize(min_size).unwrap();
-        }
+        resize_closure(min_size);
+
         unsafe {
             let node_ptr =
                 entry.offset((sref * (size_of::<Node<T>>() >> 3)) as isize) as *mut Node<T>;
@@ -374,9 +364,7 @@ impl RBTree {
         y: NodePtr<T>,
         key: T,
         link: u32,
-        tree_acc: &'a AccountInfo<'info>,
-        signer: &'a AccountInfo<'info>,
-        system_program: &'a AccountInfo<'info>,
+        resize_closure: TreeResizeClosure,
     ) -> u32 {
         let mut node = NodePtr::new(
             self.pt.clone(),
@@ -384,9 +372,7 @@ impl RBTree {
             self.non_tree_data_size,
             key,
             link,
-            tree_acc,
-            signer,
-            system_program,
+            resize_closure,
         );
         if node.is_null() {
             return NULL_NODE;
@@ -406,9 +392,7 @@ impl RBTree {
         &self,
         key: T,
         link: u32,
-        tree_acc: &'a AccountInfo<'info>,
-        signer: &'a AccountInfo<'info>,
-        system_program: &'a AccountInfo<'info>,
+        resize_closure: TreeResizeClosure,
     ) -> u32 {
         let mut node = NodePtr::new(
             self.pt.clone(),
@@ -416,9 +400,7 @@ impl RBTree {
             self.non_tree_data_size,
             key,
             link,
-            tree_acc,
-            signer,
-            system_program,
+            resize_closure,
         );
         if node.is_null() {
             return NULL_NODE;
